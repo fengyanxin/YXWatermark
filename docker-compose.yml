@@ -1,0 +1,38 @@
+# YXWatermark 一键部署
+# 启动: docker compose up -d --build
+# 访问: http://localhost:3000
+
+services:
+  web:
+    build: .
+    container_name: yxwatermark-web
+    ports:
+      - "3000:80"
+    depends_on:
+      ai:
+        condition: service_healthy
+    restart: unless-stopped
+
+  ai:
+    image: cwq1913/lama-cleaner:cpu-1.2.5
+    container_name: yxwatermark-ai
+    ports:
+      - "8080:8080" # 可选：本地 npm run dev 调试时使用
+    volumes:
+      - iopaint-models:/root/.cache
+    command: >
+      lama-cleaner
+      --host 0.0.0.0
+      --port 8080
+      --model lama
+      --device cpu
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 180s
+
+volumes:
+  iopaint-models:
