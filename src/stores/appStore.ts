@@ -35,10 +35,12 @@ function normalizeAiServiceUrl(url: string): string {
 }
 
 interface AppState {
+  mediaType: 'image' | 'video'
   activeTab: 'add' | 'remove'
   settingsOpen: boolean
   toast: string | null
   aiOnline: boolean | null
+  setMediaType: (type: 'image' | 'video') => void
   setActiveTab: (tab: 'add' | 'remove') => void
   setSettingsOpen: (open: boolean) => void
   showToast: (message: string) => void
@@ -47,10 +49,12 @@ interface AppState {
 }
 
 export const useAppStore = create<AppState>((set) => ({
+  mediaType: 'image',
   activeTab: 'add',
   settingsOpen: false,
   toast: null,
   aiOnline: null,
+  setMediaType: (type) => set({ mediaType: type }),
   setActiveTab: (tab) => set({ activeTab: tab }),
   setSettingsOpen: (open) => set({ settingsOpen: open }),
   showToast: (message) => {

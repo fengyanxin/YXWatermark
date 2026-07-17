@@ -48,15 +48,8 @@ async function drawLogoAt(
   opacity: number,
   rotation: number,
 ) {
-  const img = await loadImage(imageUrl)
-  const w = (img.width * scale) / 100
-  const h = (img.height * scale) / 100
-  ctx.save()
-  ctx.translate(x, y)
-  ctx.rotate((rotation * Math.PI) / 180)
-  ctx.globalAlpha = opacity / 100
-  ctx.drawImage(img, -w / 2, -h / 2, w, h)
-  ctx.restore()
+  const img = await getCachedImage(imageUrl)
+  drawLogoFromImage({ ctx, width: 0, height: 0 }, img, x, y, scale, opacity, rotation)
 }
 
 function loadImage(src: string): Promise<HTMLImageElement> {
@@ -67,6 +60,69 @@ function loadImage(src: string): Promise<HTMLImageElement> {
     img.onerror = reject
     img.src = src
   })
+}
+
+const imageCache = new Map<string, HTMLImageElement>()
+
+async function getCachedImage(src: string): Promise<HTMLImageElement> {
+  const cached = imageCache.get(src)
+  if (cached) return cached
+  const img = await loadImage(src)
+  imageCache.set(src, img)
+  return img
+}
+
+export async function preloadWatermarkAssets(config: WatermarkConfig): Promise<void> {
+  if (config.logo.enabled && config.logo.imageUrl) {
+    await getCachedImage(config.logo.imageUrl)
+  }
+}
+
+function drawLogoFromImage(
+  { ctx }: DrawContext,
+  img: HTMLImageElement,
+  x: number,
+  y: number,
+  scale: number,
+  opacity: number,
+  rotation: number,
+) {
+  const w = (img.width * scale) / 100
+  const h = (img.height * scale) / 100
+  ctx.save()
+  ctx.translate(x, y)
+  ctx.rotate((rotation * Math.PI) / 180)
+  ctx.globalAlpha = opacity / 100
+  ctx.drawImage(img, -w / 2, -h / 2, w, h)
+  ctx.restore()
+}
+
+function drawTiledLogoFromImage(
+  dc: DrawContext,
+  img: HTMLImageElement,
+  scale: number,
+  opacity: number,
+  tile: TileConfig,
+) {
+  const { ctx, width, height } = dc
+  const w = (img.width * scale) / 100
+  const h = (img.height * scale) / 100
+  const spacingX = Math.max(tile.spacingX, w + 20)
+  const spacingY = Math.max(tile.spacingY, h + 20)
+  const rad = (tile.rotation * Math.PI) / 180
+  const diag = Math.sqrt(width * width + height * height)
+
+  ctx.save()
+  ctx.translate(width / 2, height / 2)
+  ctx.rotate(rad)
+  ctx.globalAlpha = opacity / 100
+
+  for (let y = -diag; y <= diag; y += spacingY) {
+    for (let x = -diag; x <= diag; x += spacingX) {
+      ctx.drawImage(img, x - w / 2, y - h / 2, w, h)
+    }
+  }
+  ctx.restore()
 }
 
 function drawTiledText(
@@ -106,26 +162,8 @@ async function drawTiledLogo(
   opacity: number,
   tile: TileConfig,
 ) {
-  const { ctx, width, height } = dc
-  const img = await loadImage(imageUrl)
-  const w = (img.width * scale) / 100
-  const h = (img.height * scale) / 100
-  const spacingX = Math.max(tile.spacingX, w + 20)
-  const spacingY = Math.max(tile.spacingY, h + 20)
-  const rad = (tile.rotation * Math.PI) / 180
-  const diag = Math.sqrt(width * width + height * height)
-
-  ctx.save()
-  ctx.translate(width / 2, height / 2)
-  ctx.rotate(rad)
-  ctx.globalAlpha = opacity / 100
-
-  for (let y = -diag; y <= diag; y += spacingY) {
-    for (let x = -diag; x <= diag; x += spacingX) {
-      ctx.drawImage(img, x - w / 2, y - h / 2, w, h)
-    }
-  }
-  ctx.restore()
+  const img = await getCachedImage(imageUrl)
+  drawTiledLogoFromImage(dc, img, scale, opacity, tile)
 }
 
 function drawSingleWatermark(
@@ -173,21 +211,61 @@ async function drawSingleLogo(
   )
 }
 
-export async function renderWatermarkedImage(
-  imageUrl: string,
+/** 同步绘制（视频逐帧导出，Logo 需先 preload） */
+export function drawWatermarksOnContextSync(
+  ctx: CanvasRenderingContext2D,
   width: number,
   height: number,
   config: WatermarkConfig,
-): Promise<string> {
-  const canvas = document.createElement('canvas')
-  canvas.width = width
-  canvas.height = height
-  const ctx = canvas.getContext('2d')
-  if (!ctx) throw new Error('Canvas 不可用')
+): void {
+  const dc: DrawContext = { ctx, width, height }
+  const logoImg =
+    config.logo.enabled && config.logo.imageUrl
+      ? imageCache.get(config.logo.imageUrl) ?? null
+      : null
 
-  const baseImg = await loadImage(imageUrl)
-  ctx.drawImage(baseImg, 0, 0, width, height)
+  if (config.tile.enabled) {
+    if (config.text.enabled) {
+      drawTiledText(
+        dc,
+        config.text.text,
+        config.text.fontSize,
+        config.text.color,
+        config.text.opacity,
+        config.tile,
+      )
+    }
+    if (logoImg) {
+      drawTiledLogoFromImage(dc, logoImg, config.logo.scale, config.logo.opacity, config.tile)
+    }
+  } else {
+    drawSingleWatermark(
+      dc,
+      config,
+      config.text.position,
+      config.text.offsetX,
+      config.text.offsetY,
+    )
+    if (logoImg) {
+      const { x, y } = gridPositionToCoords(
+        config.logo.position,
+        width,
+        height,
+        config.logo.offsetX,
+        config.logo.offsetY,
+      )
+      drawLogoFromImage(dc, logoImg, x, y, config.logo.scale, config.logo.opacity, config.logo.rotation)
+    }
+  }
+}
 
+/** 在已有 canvas 上下文上绘制水印（视频逐帧复用） */
+export async function drawWatermarksOnContext(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  config: WatermarkConfig,
+): Promise<void> {
   const dc: DrawContext = { ctx, width, height }
 
   if (config.tile.enabled) {
@@ -226,6 +304,24 @@ export async function renderWatermarkedImage(
       config.logo.offsetY,
     )
   }
+}
+
+export async function renderWatermarkedImage(
+  imageUrl: string,
+  width: number,
+  height: number,
+  config: WatermarkConfig,
+): Promise<string> {
+  const canvas = document.createElement('canvas')
+  canvas.width = width
+  canvas.height = height
+  const ctx = canvas.getContext('2d')
+  if (!ctx) throw new Error('Canvas 不可用')
+
+  const baseImg = await loadImage(imageUrl)
+  ctx.drawImage(baseImg, 0, 0, width, height)
+
+  await drawWatermarksOnContext(ctx, width, height, config)
 
   return canvas.toDataURL('image/png')
 }

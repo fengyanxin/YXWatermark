@@ -8,6 +8,7 @@ const DIST = path.join(__dirname, 'dist')
 const AI_HOST = process.env.AI_HOST ?? 'ai'
 const AI_PORT = Number(process.env.AI_PORT ?? 8080)
 const PORT = Number(process.env.PORT ?? 80)
+const AI_PROXY_TIMEOUT_MS = Number(process.env.AI_PROXY_TIMEOUT_MS ?? 600_000)
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -18,6 +19,8 @@ const MIME = {
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
   '.webp': 'image/webp',
+  '.webm': 'video/webm',
+  '.mp4': 'video/mp4',
   '.ico': 'image/x-icon',
   '.json': 'application/json',
 }
@@ -33,7 +36,7 @@ function proxyToAi(req, res, targetPath) {
       path: targetPath,
       method: req.method,
       headers,
-      timeout: 300_000,
+      timeout: AI_PROXY_TIMEOUT_MS,
     },
     (proxyRes) => {
       res.writeHead(proxyRes.statusCode ?? 502, proxyRes.headers)
@@ -95,5 +98,5 @@ const server = http.createServer((req, res) => {
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`YXWatermark web → http://0.0.0.0:${PORT}`)
-  console.log(`AI proxy   → http://${AI_HOST}:${AI_PORT}`)
+  console.log(`AI proxy   → http://${AI_HOST}:${AI_PORT} (timeout ${AI_PROXY_TIMEOUT_MS}ms)`)
 })

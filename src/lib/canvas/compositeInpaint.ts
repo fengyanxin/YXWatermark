@@ -24,24 +24,9 @@ export async function compositeInpaintResult(
     const oData = original.ctx.getImageData(0, 0, width, height)
     const rData = result.ctx.getImageData(0, 0, width, height)
     const mData = mask.ctx.getImageData(0, 0, width, height)
-    const out = outCtx.createImageData(width, height)
+    const blended = compositeInpaintPixels(oData, rData, mData, 1)
 
-    for (let i = 0; i < oData.data.length; i += 4) {
-      // mask 白色区域使用 AI 结果，其余保持原图 100% 像素
-      if (mData.data[i] > 127) {
-        out.data[i] = rData.data[i]
-        out.data[i + 1] = rData.data[i + 1]
-        out.data[i + 2] = rData.data[i + 2]
-        out.data[i + 3] = rData.data[i + 3]
-      } else {
-        out.data[i] = oData.data[i]
-        out.data[i + 1] = oData.data[i + 1]
-        out.data[i + 2] = oData.data[i + 2]
-        out.data[i + 3] = oData.data[i + 3]
-      }
-    }
-
-    outCtx.putImageData(out, 0, 0)
+    outCtx.putImageData(blended, 0, 0)
     return outCanvas.toDataURL('image/png')
   } finally {
     if (typeof resultSource !== 'string') {
@@ -104,4 +89,87 @@ export function estimateMaskCoverage(
     }
     return masked / total
   })
+}
+
+/** 像素级合成 + 边缘羽化，避免选区边界生硬/整块发糊 */
+export function compositeInpaintPixels(
+  original: ImageData,
+  result: ImageData,
+  mask: ImageData,
+  featherPx = 1,
+): ImageData {
+  const { width, height } = original
+  const alpha = featherMaskAlpha(mask, width, height, featherPx)
+  const out = new ImageData(width, height)
+
+  for (let p = 0; p < width * height; p++) {
+    const i = p * 4
+    const a = alpha[p] / 255
+    const inv = 1 - a
+    out.data[i] = Math.round(original.data[i] * inv + result.data[i] * a)
+    out.data[i + 1] = Math.round(original.data[i + 1] * inv + result.data[i + 1] * a)
+    out.data[i + 2] = Math.round(original.data[i + 2] * inv + result.data[i + 2] * a)
+    out.data[i + 3] = Math.round(original.data[i + 3] * inv + result.data[i + 3] * a)
+  }
+  return out
+}
+
+/** 二值 mask 盒式模糊，边缘 Alpha 过渡更自然 */
+function featherMaskAlpha(
+  mask: ImageData,
+  width: number,
+  height: number,
+  radius: number,
+): Uint8ClampedArray {
+  const size = width * height
+  let buf = new Float32Array(size)
+  for (let p = 0; p < size; p++) {
+    buf[p] = mask.data[p * 4] > 127 ? 1 : 0
+  }
+  if (radius <= 0) {
+    const out = new Uint8ClampedArray(size)
+    for (let p = 0; p < size; p++) out[p] = buf[p] ? 255 : 0
+    return out
+  }
+
+  const passes = radius * 2 + 1
+  for (let pass = 0; pass < passes; pass++) {
+    buf = boxBlurFloat(buf, width, height)
+  }
+
+  const out = new Uint8ClampedArray(size)
+  for (let p = 0; p < size; p++) {
+    out[p] = Math.round(Math.min(1, buf[p]) * 255)
+  }
+  return out
+}
+
+function boxBlurFloat(src: Float32Array, width: number, height: number): Float32Array {
+  const dst = new Float32Array(src.length)
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      let sum = 0
+      let count = 0
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const nx = x + dx
+          const ny = y + dy
+          if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue
+          sum += src[ny * width + nx]
+          count++
+        }
+      }
+      dst[y * width + x] = sum / count
+    }
+  }
+  return dst
+}
+
+export async function loadMaskImageData(
+  maskDataUrl: string,
+  width: number,
+  height: number,
+): Promise<ImageData> {
+  const { ctx } = await loadToCanvas(maskDataUrl, width, height)
+  return ctx.getImageData(0, 0, width, height)
 }

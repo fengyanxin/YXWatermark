@@ -70,9 +70,39 @@ export function canvasToBlob(canvas: HTMLCanvasElement, type: string, quality?: 
   })
 }
 
+export function dataUrlToBlob(dataUrl: string): Blob {
+  const comma = dataUrl.indexOf(',')
+  if (comma < 0) throw new Error('无效的图片地址')
+  const header = dataUrl.slice(0, comma)
+  const mime = header.match(/:(.*?);/)?.[1] ?? 'application/octet-stream'
+  const binary = atob(dataUrl.slice(comma + 1))
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+  return new Blob([bytes], { type: mime })
+}
+
 export async function imageUrlToBlob(url: string): Promise<Blob> {
-  const res = await fetch(url)
-  return res.blob()
+  if (url.startsWith('data:')) {
+    return dataUrlToBlob(url)
+  }
+  try {
+    const res = await fetch(url)
+    if (!res.ok) throw new Error(`资源加载失败 (${res.status})`)
+    return res.blob()
+  } catch (err) {
+    throw new Error(formatResourceFetchError(err))
+  }
+}
+
+function formatResourceFetchError(err: unknown): string {
+  if (err instanceof Error && err.message.startsWith('资源加载失败')) return err.message
+  if (err instanceof DOMException && err.name === 'AbortError') {
+    return '资源加载超时，请重试'
+  }
+  if (err instanceof TypeError) {
+    return '资源加载失败，请刷新页面后重试'
+  }
+  return err instanceof Error ? err.message : '资源加载失败'
 }
 
 export function revokeObjectUrl(url: string | null) {

@@ -1,3 +1,5 @@
+export type MediaType = 'image' | 'video'
+
 export type AppTab = 'add' | 'remove'
 
 export type GridPosition =
@@ -60,6 +62,20 @@ export interface ImageFile {
   height: number
 }
 
+export interface VideoFile {
+  file: File
+  url: string
+  width: number
+  height: number
+  duration: number
+  /** 原片帧率，导出时不低于此值 */
+  fps: number
+  /** 预计导出帧数（duration × fps，上传时计算） */
+  frameCount?: number
+  /** 首帧预览图（上传时抓取） */
+  firstFrameUrl: string
+}
+
 export const DEFAULT_WATERMARK_CONFIG: WatermarkConfig = {
   text: {
     enabled: true,
@@ -92,3 +108,11 @@ export const DEFAULT_WATERMARK_CONFIG: WatermarkConfig = {
 
 export const ACCEPTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp']
 export const MAX_IMAGE_SIZE = 20 * 1024 * 1024
+
+export const ACCEPTED_VIDEO_TYPES = ['video/mp4', 'video/webm', 'video/quicktime']
+export const MAX_VIDEO_SIZE = 500 * 1024 * 1024
+export const MAX_VIDEO_DURATION = 60
+/** 无法探测原片帧率时的回退值 */
+export const DEFAULT_VIDEO_FPS = 30
+
+export type VideoExportFormat = 'webm' | 'mp4'

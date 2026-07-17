@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Stage, Layer, Image as KonvaImage, Line, Rect } from 'react-konva'
 import type Konva from 'konva'
 import type { ImageFile, MaskTool } from '@/types'
@@ -39,6 +39,7 @@ export function MaskEditor({
   const draftRectRef = useRef<MaskData['rects'][0] | null>(null)
   const stageRef = useRef<Konva.Stage | null>(null)
   const [draftRect, setDraftRect] = useState<MaskData['rects'][0] | null>(null)
+  const [history, setHistory] = useState<('line' | 'rect')[]>([])
   const containerRef = useRef<HTMLDivElement>(null)
   const [containerWidth, setContainerWidth] = useState(600)
 
@@ -64,9 +65,47 @@ export function MaskEditor({
     img.crossOrigin = 'anonymous'
     img.onload = () => setBaseImage(img)
     img.src = image.url
+  }, [image?.url])
+
+  useEffect(() => {
     setLines([])
     setRects([])
-  }, [image])
+    setHistory([])
+  }, [image?.file.name, image?.width, image?.height])
+
+  const undo = useCallback(() => {
+    setHistory((h) => {
+      const last = h[h.length - 1]
+      if (!last) return h
+      if (last === 'line') {
+        setLines((prev) => prev.slice(0, -1))
+      } else {
+        setRects((prev) => prev.slice(0, -1))
+      }
+      return h.slice(0, -1)
+    })
+  }, [])
+
+  const clearAll = useCallback(() => {
+    setLines([])
+    setRects([])
+    setHistory([])
+  }, [])
+
+  const canUndo = history.length > 0
+  const hasMarks = lines.length > 0 || rects.length > 0
+
+  useEffect(() => {
+    if (readOnly || !image || resultUrl) return
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'z') {
+        e.preventDefault()
+        undo()
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [readOnly, image, resultUrl, undo])
 
   useEffect(() => {
     if (!resultUrl) {
@@ -106,6 +145,7 @@ export function MaskEditor({
     const rect = draftRectRef.current
     if (rect && rect.width > 2 && rect.height > 2) {
       setRects((prev) => [...prev, rect])
+      setHistory((h) => [...h, 'rect'])
     }
     isRectDrawing.current = false
     rectStart.current = null
@@ -129,6 +169,7 @@ export function MaskEditor({
         ...prev,
         { points: [coords.x, coords.y], strokeWidth: brushSize },
       ])
+      setHistory((h) => [...h, 'line'])
     } else {
       isRectDrawing.current = true
       rectStart.current = coords
@@ -192,7 +233,28 @@ export function MaskEditor({
           <p className="text-sm">上传图片后标记水印区域</p>
         </div>
       ) : (
-        <div className="relative" style={{ width: stageWidth, height: stageHeight }}>
+        <div className="flex w-full flex-col items-center gap-2">
+          {!readOnly && !resultUrl && (
+            <div className="flex w-full max-w-xl justify-end gap-2 px-1">
+              <button
+                type="button"
+                onClick={undo}
+                disabled={!canUndo}
+                className="rounded-lg border border-[var(--color-border)] bg-white px-3 py-1.5 text-xs font-medium hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                ↩ 撤销
+              </button>
+              <button
+                type="button"
+                onClick={clearAll}
+                disabled={!hasMarks}
+                className="rounded-lg border border-[var(--color-border)] bg-white px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                清空标记
+              </button>
+            </div>
+          )}
+          <div className="relative" style={{ width: stageWidth, height: stageHeight }}>
           {showCompare ? (
             <>
               <div
@@ -279,6 +341,7 @@ export function MaskEditor({
               )}
             </Stage>
           )}
+          </div>
         </div>
       )}
     </div>

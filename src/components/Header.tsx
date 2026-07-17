@@ -4,6 +4,8 @@ import { useSettingsStore } from '@/stores/appStore'
 import { createAIServiceClient } from '@/lib/ai-service/client'
 
 export function Header() {
+  const mediaType = useAppStore((s) => s.mediaType)
+  const setMediaType = useAppStore((s) => s.setMediaType)
   const activeTab = useAppStore((s) => s.activeTab)
   const setActiveTab = useAppStore((s) => s.setActiveTab)
   const setSettingsOpen = useAppStore((s) => s.setSettingsOpen)
@@ -31,11 +33,34 @@ export function Header() {
         </div>
         <div>
           <h1 className="text-base font-semibold leading-tight">YXWatermark</h1>
-          <p className="text-xs text-[var(--color-muted)]">本地图片水印工具</p>
+          <p className="text-xs text-[var(--color-muted)]">本地图片 / 视频水印工具</p>
         </div>
       </div>
 
-      <nav className="flex items-center gap-1 rounded-xl bg-slate-100 p-1">
+      <div className="flex items-center gap-2">
+        <nav className="flex items-center gap-1 rounded-xl bg-slate-100 p-1">
+          {(
+            [
+              { id: 'image' as const, label: '图片' },
+              { id: 'video' as const, label: '视频' },
+            ] as const
+          ).map((m) => (
+            <button
+              key={m.id}
+              type="button"
+              onClick={() => setMediaType(m.id)}
+              className={`rounded-lg px-3 py-2 text-sm font-medium transition-all ${
+                mediaType === m.id
+                  ? 'bg-white text-teal-brand shadow-sm'
+                  : 'text-[var(--color-muted)] hover:text-[var(--color-text)]'
+              }`}
+            >
+              {m.label}
+            </button>
+          ))}
+        </nav>
+
+        <nav className="flex items-center gap-1 rounded-xl bg-slate-100 p-1">
         {(
           [
             { id: 'add' as const, label: '添加水印' },
@@ -55,7 +80,8 @@ export function Header() {
             {tab.label}
           </button>
         ))}
-      </nav>
+        </nav>
+      </div>
 
       <div className="flex items-center gap-3">
         <div

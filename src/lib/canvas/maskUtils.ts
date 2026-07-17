@@ -166,32 +166,47 @@ function markHighContrastPixels(
 ) {
   const { data } = imageData
   const { data: mask } = maskData
-  const threshold = 40
 
   for (let y = zone.y; y < Math.min(zone.y + zone.h, height); y++) {
     for (let x = zone.x; x < Math.min(zone.x + zone.w, width); x++) {
-      const i = (y * width + x) * 4
-      const r = data[i]
-      const g = data[i + 1]
-      const b = data[i + 2]
-      const a = data[i + 3]
-      const lum = 0.299 * r + 0.587 * g + 0.114 * b
-
-      const isLightText = lum > 200 && a > 100
-      const isDarkText = lum < 60 && a > 100
-      const isSemiTransparent = a > 50 && a < 230
-
-      if (isLightText || isDarkText || isSemiTransparent) {
-        const neighborContrast = sampleLocalContrast(data, x, y, width, height)
-        if (neighborContrast > threshold || isSemiTransparent) {
-          mask[i] = 255
-          mask[i + 1] = 255
-          mask[i + 2] = 255
-          mask[i + 3] = 255
-        }
+      if (isLikelyWatermarkPixel(data, x, y, width, height)) {
+        const i = (y * width + x) * 4
+        mask[i] = 255
+        mask[i + 1] = 255
+        mask[i + 2] = 255
+        mask[i + 3] = 255
       }
     }
   }
+}
+
+/** 放宽检测：白/黑/半透明文字 + 高对比边缘（彩色水印） */
+function isLikelyWatermarkPixel(
+  data: Uint8ClampedArray,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+): boolean {
+  const i = (y * width + x) * 4
+  const r = data[i]
+  const g = data[i + 1]
+  const b = data[i + 2]
+  const a = data[i + 3]
+  const lum = 0.299 * r + 0.587 * g + 0.114 * b
+  const contrast = sampleLocalContrast(data, x, y, width, height)
+
+  const isLightText = lum > 170 && a > 80
+  const isDarkText = lum < 90 && a > 80
+  const isSemiTransparent = a > 40 && a < 245
+  const isStrongEdge = contrast > 35
+  const isColoredText = contrast > 22 && (Math.max(r, g, b) - Math.min(r, g, b) > 25)
+
+  if (isSemiTransparent && contrast > 12) return true
+  if ((isLightText || isDarkText) && contrast > 18) return true
+  if (isStrongEdge && (isLightText || isDarkText || isColoredText)) return true
+  if (isColoredText && lum > 100 && lum < 220) return true
+  return false
 }
 
 function sampleLocalContrast(
@@ -225,7 +240,195 @@ export async function prepareMaskForInpaint(
   maskDataUrl: string,
   width: number,
   height: number,
+  options?: {
+    sourceImageUrl?: string
+    rects?: { x: number; y: number; width: number; height: number }[]
+  },
 ): Promise<string> {
-  // 文字水印仅 1px 膨胀，避免修复区域过大
-  return refineMaskForInpaint(maskDataUrl, width, height, 1)
+  let maskUrl = maskDataUrl
+
+  if (options?.sourceImageUrl && options.rects?.length) {
+    maskUrl = await tightenRectMaskToContent(
+      options.sourceImageUrl,
+      maskUrl,
+      width,
+      height,
+      options.rects,
+    )
+  }
+
+  return refineMaskForInpaint(maskUrl, width, height, 1)
+}
+
+/** 矩形选区只标记水印像素，避免整块背景被 AI 替换发糊 */
+async function tightenRectMaskToContent(
+  imageUrl: string,
+  maskDataUrl: string,
+  width: number,
+  height: number,
+  rects: { x: number; y: number; width: number; height: number }[],
+): Promise<string> {
+  const [imageData, maskData] = await Promise.all([
+    loadImageData(imageUrl, width, height),
+    loadImageData(maskDataUrl, width, height),
+  ])
+
+  const out = new Uint8ClampedArray(maskData.data)
+
+  for (const rect of rects) {
+    if (rect.width < 4 || rect.height < 4) continue
+
+    const x0 = Math.max(0, Math.floor(rect.x))
+    const y0 = Math.max(0, Math.floor(rect.y))
+    const x1 = Math.min(width, Math.ceil(rect.x + rect.width))
+    const y1 = Math.min(height, Math.ceil(rect.y + rect.height))
+    const rw = x1 - x0
+    const rh = y1 - y0
+    if (rw < 4 || rh < 4) continue
+
+    // 清掉矩形内整块 mask，再只标水印像素
+    for (let y = y0; y < y1; y++) {
+      for (let x = x0; x < x1; x++) {
+        const i = (y * width + x) * 4
+        out[i] = 0
+        out[i + 1] = 0
+        out[i + 2] = 0
+        out[i + 3] = 255
+      }
+    }
+
+    const zone = { x: x0, y: y0, w: rw, h: rh }
+    const tempMask = new ImageData(new Uint8ClampedArray(out), width, height)
+    markWatermarkPixelsInZone(imageData, tempMask, zone, width, height)
+
+    const detected = countMaskInZone(tempMask.data, x0, y0, x1, y1, width)
+    const area = rw * rh
+    // 检测覆盖不足时，用内缩矩形保证能去掉水印（比整块略小，减少发糊）
+    if (detected < area * 0.12) {
+      fillShrinkRect(tempMask.data, x0, y0, x1, y1, width, 0.12)
+    } else {
+      dilateMaskInZone(tempMask.data, x0, y0, x1, y1, width, height, 2)
+    }
+
+    out.set(tempMask.data)
+  }
+
+  const canvas = document.createElement('canvas')
+  canvas.width = width
+  canvas.height = height
+  const ctx = canvas.getContext('2d')
+  if (!ctx) throw new Error('Canvas 不可用')
+  ctx.putImageData(new ImageData(out, width, height), 0, 0)
+  return canvas.toDataURL('image/png')
+}
+
+function loadImageData(url: string, width: number, height: number): Promise<ImageData> {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    img.crossOrigin = 'anonymous'
+    img.onload = () => {
+      const canvas = document.createElement('canvas')
+      canvas.width = width
+      canvas.height = height
+      const ctx = canvas.getContext('2d')
+      if (!ctx) {
+        reject(new Error('Canvas 不可用'))
+        return
+      }
+      ctx.drawImage(img, 0, 0, width, height)
+      resolve(ctx.getImageData(0, 0, width, height))
+    }
+    img.onerror = () => reject(new Error('图片加载失败'))
+    img.src = url
+  })
+}
+
+/** 在指定区域内检测文字/半透明水印像素 */
+function markWatermarkPixelsInZone(
+  imageData: ImageData,
+  maskData: ImageData,
+  zone: Zone,
+  width: number,
+  height: number,
+) {
+  markHighContrastPixels(imageData, maskData, zone, width, height)
+}
+
+function countMaskInZone(
+  data: Uint8ClampedArray,
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number,
+  width: number,
+): number {
+  let n = 0
+  for (let y = y0; y < y1; y++) {
+    for (let x = x0; x < x1; x++) {
+      if (data[(y * width + x) * 4] > 127) n++
+    }
+  }
+  return n
+}
+
+/** 内缩矩形填充 mask，margin 为相对短边的比例 */
+function fillShrinkRect(
+  data: Uint8ClampedArray,
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number,
+  width: number,
+  marginRatio: number,
+) {
+  const rw = x1 - x0
+  const rh = y1 - y0
+  const inset = Math.max(2, Math.floor(Math.min(rw, rh) * marginRatio))
+  const sx0 = x0 + inset
+  const sy0 = y0 + inset
+  const sx1 = x1 - inset
+  const sy1 = y1 - inset
+  if (sx1 <= sx0 || sy1 <= sy0) return
+
+  for (let y = sy0; y < sy1; y++) {
+    for (let x = sx0; x < sx1; x++) {
+      const i = (y * width + x) * 4
+      data[i] = 255
+      data[i + 1] = 255
+      data[i + 2] = 255
+      data[i + 3] = 255
+    }
+  }
+}
+
+function dilateMaskInZone(
+  data: Uint8ClampedArray,
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number,
+  width: number,
+  height: number,
+  radius: number,
+) {
+  const copy = new Uint8ClampedArray(data)
+  for (let y = y0; y < y1; y++) {
+    for (let x = x0; x < x1; x++) {
+      const i = (y * width + x) * 4
+      if (copy[i] <= 127) continue
+      for (let dy = -radius; dy <= radius; dy++) {
+        for (let dx = -radius; dx <= radius; dx++) {
+          if (dx * dx + dy * dy > radius * radius) continue
+          const nx = x + dx
+          const ny = y + dy
+          if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue
+          const ni = (ny * width + nx) * 4
+          data[ni] = 255
+          data[ni + 1] = 255
+          data[ni + 2] = 255
+          data[ni + 3] = 255
+        }
+      }
+    }
+  }
 }

@@ -1,4 +1,4 @@
-import { downloadDataUrl } from '@/lib/utils/image'
+import { downloadDataUrl, dataUrlToBlob } from '@/lib/utils/image'
 
 let sessionDirHandle: FileSystemDirectoryHandle | null = null
 
@@ -53,7 +53,14 @@ async function saveWithFilePicker(blob: Blob, filename: string): Promise<boolean
   if (!isSaveFilePickerSupported()) return false
 
   const ext = filename.split('.').pop()?.toLowerCase() ?? 'png'
-  const mime = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : 'image/png'
+  const mimeMap: Record<string, string> = {
+    png: 'image/png',
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    webm: 'video/webm',
+    mp4: 'video/mp4',
+  }
+  const mime = mimeMap[ext] ?? blob.type ?? 'application/octet-stream'
 
   try {
     const handle = await window.showSaveFilePicker!({
@@ -103,6 +110,8 @@ export async function saveDataUrlOnDownload(
   dataUrl: string,
   filename: string,
 ): Promise<SaveResult> {
-  const blob = await fetch(dataUrl).then((r) => r.blob())
+  const blob = dataUrl.startsWith('data:')
+    ? dataUrlToBlob(dataUrl)
+    : await fetch(dataUrl).then((r) => r.blob())
   return saveBlobOnDownload(blob, filename)
 }

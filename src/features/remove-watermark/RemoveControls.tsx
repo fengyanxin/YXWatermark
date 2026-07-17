@@ -109,7 +109,10 @@ export function RemoveControls({ maskData }: { maskData: MaskData }) {
           image.width,
           image.height,
         )
-        maskUrl = await prepareMaskForInpaint(rawMask, image.width, image.height)
+        maskUrl = await prepareMaskForInpaint(rawMask, image.width, image.height, {
+          sourceImageUrl: image.url,
+          rects: maskData.rects.filter((r) => r.width > 0 && r.height > 0),
+        })
       }
 
       const coverage = await estimateMaskCoverage(maskUrl, image.width, image.height)
@@ -188,9 +191,8 @@ export function RemoveControls({ maskData }: { maskData: MaskData }) {
         <div className="rounded-lg border border-teal-brand/20 bg-teal-50 p-3 text-xs text-teal-900">
           <p className="font-medium mb-1">文字水印标记技巧</p>
           <ul className="list-disc pl-4 space-y-0.5">
-            <li>用矩形工具<strong>紧贴文字边缘</strong>框选，不要留太多空白</li>
-            <li>选区越小越清晰，建议不超过图片面积的 5%</li>
-            <li>半透明水印可稍微放大选区 1-2 像素</li>
+            <li>用矩形工具<strong>紧贴文字边缘</strong>框选，系统会自动收紧 mask</li>
+            <li>选区越小越清晰；半透明水印建议用画笔</li>
           </ul>
         </div>
       )}
@@ -277,13 +279,22 @@ export function RemoveControls({ maskData }: { maskData: MaskData }) {
           {processing ? '处理中…' : mode === 'auto' ? '自动去水印' : '开始修复'}
         </button>
         {resultUrl && (
-          <button
-            type="button"
-            onClick={handleDownload}
-            className="w-full rounded-xl border border-teal-brand py-2.5 text-sm font-medium text-teal-brand hover:bg-teal-brand/5"
-          >
-            保存结果
-          </button>
+          <>
+            <button
+              type="button"
+              onClick={() => setResultUrl(null)}
+              className="w-full rounded-xl border border-[var(--color-border)] py-2.5 text-sm font-medium hover:bg-slate-50"
+            >
+              清除预览，重新标记
+            </button>
+            <button
+              type="button"
+              onClick={handleDownload}
+              className="w-full rounded-xl border border-teal-brand py-2.5 text-sm font-medium text-teal-brand hover:bg-teal-brand/5"
+            >
+              保存结果
+            </button>
+          </>
         )}
       </div>
     </div>

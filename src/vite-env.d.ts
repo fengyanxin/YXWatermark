@@ -1,5 +1,9 @@
 /// <reference types="vite/client" />
 
+interface HTMLVideoElement {
+  captureStream?(): MediaStream
+}
+
 interface Window {
   showDirectoryPicker?: (options?: { mode?: 'read' | 'readwrite' }) => Promise<FileSystemDirectoryHandle>
   showSaveFilePicker?: (options?: SaveFilePickerOptions) => Promise<FileSystemFileHandle>

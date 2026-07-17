@@ -16,6 +16,7 @@ export default defineConfig({
         target: 'http://localhost:8080',
         changeOrigin: true,
         rewrite: (p) => p.replace(/^\/lama-api/, ''),
+        timeout: 600_000,
       },
     },
   },

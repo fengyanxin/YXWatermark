@@ -1,4 +1,4 @@
-# 使用本地/镜像站已有的 node 镜像，避免 Docker Hub 超时
+# YXWatermark — 前端静态资源 + AI 反向代理（图片/视频水印）
 FROM node:20-bookworm-slim AS builder
 
 WORKDIR /app
@@ -21,6 +21,7 @@ COPY docker/server.mjs ./server.mjs
 
 ENV AI_HOST=ai
 ENV AI_PORT=8080
+ENV AI_PROXY_TIMEOUT_MS=600000
 ENV PORT=80
 
 EXPOSE 80

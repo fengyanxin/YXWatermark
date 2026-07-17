@@ -1,4 +1,4 @@
-# YXWatermark 一键部署
+# YXWatermark 一键部署（图片 + 视频水印）
 # 启动: docker compose up -d --build
 # 访问: http://localhost:3000
 
@@ -8,6 +8,11 @@ services:
     container_name: yxwatermark-web
     ports:
       - "3000:80"
+    environment:
+      AI_HOST: ai
+      AI_PORT: "8080"
+      # 视频逐帧 AI 修复时单帧可能较慢，默认 10 分钟
+      AI_PROXY_TIMEOUT_MS: "600000"
     depends_on:
       ai:
         condition: service_healthy

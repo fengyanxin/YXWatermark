@@ -1,17 +1,26 @@
 import { useState } from 'react'
 import { useAddWatermarkStore } from '@/stores/addWatermarkStore'
+import { useAddVideoWatermarkStore } from '@/stores/addVideoWatermarkStore'
+import { canExportMp4WithAudio } from '@/lib/video/frameEncoder'
 import { GridPositionPicker } from '@/components/GridPositionPicker'
 import { PanelSection, SliderField, ToggleField } from '@/components/PanelSection'
 
 type ControlTab = 'text' | 'logo' | 'tile'
 
-export function WatermarkControls() {
-  const config = useAddWatermarkStore((s) => s.config)
-  const setConfig = useAddWatermarkStore((s) => s.setConfig)
-  const exportFormat = useAddWatermarkStore((s) => s.exportFormat)
-  const setExportFormat = useAddWatermarkStore((s) => s.setExportFormat)
-  const jpegQuality = useAddWatermarkStore((s) => s.jpegQuality)
-  const setJpegQuality = useAddWatermarkStore((s) => s.setJpegQuality)
+interface WatermarkControlsProps {
+  variant?: 'image' | 'video'
+}
+
+export function WatermarkControls({ variant = 'image' }: WatermarkControlsProps) {
+  const imageStore = useAddWatermarkStore()
+  const videoStore = useAddVideoWatermarkStore()
+  const store = variant === 'video' ? videoStore : imageStore
+
+  const config = store.config
+  const setConfig = store.setConfig
+  const imageExportFormat = variant === 'image' ? imageStore.exportFormat : 'png'
+  const videoExportFormat = variant === 'video' ? videoStore.exportFormat : 'webm'
+  const jpegQuality = variant === 'image' ? imageStore.jpegQuality : 90
   const [tab, setTab] = useState<ControlTab>('text')
 
   const tabs: { id: ControlTab; label: string }[] = [
@@ -250,31 +259,61 @@ export function WatermarkControls() {
         )}
 
         <PanelSection title="导出">
-          <div className="flex gap-2">
-            {(['png', 'jpeg'] as const).map((f) => (
-              <button
-                key={f}
-                type="button"
-                onClick={() => setExportFormat(f)}
-                className={`flex-1 rounded-lg border py-2 text-sm uppercase ${
-                  exportFormat === f
-                    ? 'border-teal-brand bg-teal-brand/10 text-teal-brand'
-                    : 'border-[var(--color-border)]'
-                }`}
-              >
-                {f}
-              </button>
-            ))}
-          </div>
-          {exportFormat === 'jpeg' && (
-            <SliderField
-              label="JPEG 质量"
-              value={jpegQuality}
-              min={60}
-              max={100}
-              unit="%"
-              onChange={setJpegQuality}
-            />
+          {variant === 'video' ? (
+            <div className="space-y-2">
+              <div className="flex gap-2">
+                {(['webm', 'mp4'] as const).map((f) => (
+                  <button
+                    key={f}
+                    type="button"
+                    onClick={() => videoStore.setExportFormat(f)}
+                    className={`flex-1 rounded-lg border py-2 text-sm uppercase ${
+                      videoExportFormat === f
+                        ? 'border-teal-brand bg-teal-brand/10 text-teal-brand'
+                        : 'border-[var(--color-border)]'
+                    }`}
+                  >
+                    {f}
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs text-[var(--color-muted)]">
+                {videoExportFormat === 'webm'
+                  ? 'WebM（推荐）：保留原分辨率、帧率、时长与音轨，高码率导出'
+                  : canExportMp4WithAudio()
+                    ? 'MP4：保留原分辨率、帧率与时长，可保留音轨（Safari）'
+                    : 'MP4：保留原分辨率、帧率与时长；Chrome 下可能无音轨'}
+              </p>
+            </div>
+          ) : (
+            <>
+              <div className="flex gap-2">
+                {(['png', 'jpeg'] as const).map((f) => (
+                  <button
+                    key={f}
+                    type="button"
+                    onClick={() => imageStore.setExportFormat(f)}
+                    className={`flex-1 rounded-lg border py-2 text-sm uppercase ${
+                      imageExportFormat === f
+                        ? 'border-teal-brand bg-teal-brand/10 text-teal-brand'
+                        : 'border-[var(--color-border)]'
+                    }`}
+                  >
+                    {f}
+                  </button>
+                ))}
+              </div>
+              {imageExportFormat === 'jpeg' && (
+                <SliderField
+                  label="JPEG 质量"
+                  value={jpegQuality}
+                  min={60}
+                  max={100}
+                  unit="%"
+                  onChange={imageStore.setJpegQuality}
+                />
+              )}
+            </>
           )}
         </PanelSection>
       </div>
