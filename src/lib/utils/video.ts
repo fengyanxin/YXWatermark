@@ -43,8 +43,11 @@ export function mountOffscreenVideo(video: HTMLVideoElement): () => void {
   return () => host.remove()
 }
 
+export type VideoMetaProgress = { progress: number; label: string }
+
 export function getVideoMeta(
   file: File,
+  onProgress?: (p: VideoMetaProgress) => void,
 ): Promise<{
   width: number
   height: number
@@ -54,15 +57,22 @@ export function getVideoMeta(
   frameCount?: number
   firstFrameUrl: string
 }> {
+  const report = (progress: number, label: string) => onProgress?.({ progress, label })
   const url = URL.createObjectURL(file)
+  report(5, '读取视频…')
   return loadVideoElement(url).then(async (video) => {
     const unmount = mountOffscreenVideo(video)
     try {
+      report(25, '解析元数据…')
       const fromFile = await parseVideoInfoFromFile(file)
+      report(45, '检测帧率…')
       const fps = await resolveVideoExportFps(video, fromFile)
       const frameCount = computeProcessFrameCount(video.duration, fps)
+      report(70, '预处理解码…')
       await primeVideoDecoder(video)
+      report(90, '生成预览…')
       const firstFrameUrl = await captureVideoFrameAt(video, 0, video.videoWidth, video.videoHeight)
+      report(100, '完成')
       return {
         width: video.videoWidth,
         height: video.videoHeight,

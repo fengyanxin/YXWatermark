@@ -1,4 +1,4 @@
-import { useCallback, useRef } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import {
   ACCEPTED_VIDEO_TYPES,
   MAX_VIDEO_DURATION,
@@ -19,9 +19,14 @@ interface VideoUploadProps {
 export function VideoUpload({ video, onVideo, label = '上传视频' }: VideoUploadProps) {
   const inputRef = useRef<HTMLInputElement>(null)
   const showToast = useAppStore((s) => s.showToast)
+  const [loading, setLoading] = useState(false)
+  const [loadingFile, setLoadingFile] = useState<string | null>(null)
+  const [loadProgress, setLoadProgress] = useState(0)
+  const [loadLabel, setLoadLabel] = useState('')
 
   const handleFile = useCallback(
     async (file: File) => {
+      if (loading) return
       if (!ACCEPTED_VIDEO_TYPES.includes(file.type)) {
         showToast('请上传 MP4 / WebM / MOV 格式视频')
         return
@@ -30,8 +35,18 @@ export function VideoUpload({ video, onVideo, label = '上传视频' }: VideoUpl
         showToast(`视频不能超过 ${MAX_VIDEO_SIZE_MB}MB，请压缩后重试`)
         return
       }
+      setLoading(true)
+      setLoadingFile(file.name)
+      setLoadProgress(0)
+      setLoadLabel('读取视频…')
       try {
-        const { width, height, duration, url, fps, frameCount, firstFrameUrl } = await getVideoMeta(file)
+        const { width, height, duration, url, fps, frameCount, firstFrameUrl } = await getVideoMeta(
+          file,
+          ({ progress, label: stageLabel }) => {
+            setLoadProgress(progress)
+            setLoadLabel(stageLabel)
+          },
+        )
         if (duration > MAX_VIDEO_DURATION) {
           URL.revokeObjectURL(url)
           showToast(`视频时长不能超过 ${MAX_VIDEO_DURATION} 秒`)
@@ -40,9 +55,14 @@ export function VideoUpload({ video, onVideo, label = '上传视频' }: VideoUpl
         onVideo({ file, url, width, height, duration, fps, frameCount, firstFrameUrl })
       } catch {
         showToast('视频加载失败，请重试')
+      } finally {
+        setLoading(false)
+        setLoadingFile(null)
+        setLoadProgress(0)
+        setLoadLabel('')
       }
     },
-    [onVideo, showToast],
+    [loading, onVideo, showToast],
   )
 
   const onDrop = useCallback(
@@ -73,25 +93,55 @@ export function VideoUpload({ video, onVideo, label = '上传视频' }: VideoUpl
     <div className="flex h-full flex-col gap-3">
       <div
         role="button"
-        tabIndex={0}
-        onClick={() => inputRef.current?.click()}
-        onKeyDown={(e) => e.key === 'Enter' && inputRef.current?.click()}
+        tabIndex={loading ? -1 : 0}
+        aria-busy={loading}
+        onClick={() => !loading && inputRef.current?.click()}
+        onKeyDown={(e) => !loading && e.key === 'Enter' && inputRef.current?.click()}
         onDragOver={(e) => e.preventDefault()}
-        onDrop={onDrop}
-        className="flex flex-1 cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-[var(--color-border)] bg-white p-6 transition-colors hover:border-teal-brand hover:bg-teal-50/30"
+        onDrop={loading ? undefined : onDrop}
+        className={`relative flex flex-1 flex-col items-center justify-center rounded-xl border-2 border-dashed border-[var(--color-border)] bg-white p-6 transition-colors ${
+          loading
+            ? 'cursor-wait border-teal-brand/50 bg-teal-50/20'
+            : 'cursor-pointer hover:border-teal-brand hover:bg-teal-50/30'
+        }`}
       >
-        <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-teal-brand/10 text-2xl">
-          🎬
-        </div>
-        <p className="text-sm font-medium text-[var(--color-text)]">{label}</p>
-        <p className="mt-1 text-xs text-[var(--color-muted)]">
-          拖拽或点击选择 · MP4 WebM MOV · 最大 {MAX_VIDEO_SIZE_MB}MB · 最长 {MAX_VIDEO_DURATION}s
-        </p>
+        {loading ? (
+          <div className="flex w-full flex-col items-center gap-3 px-2">
+            <div className="h-8 w-8 animate-spin rounded-full border-2 border-teal-brand/30 border-t-teal-brand" />
+            <p className="text-sm font-medium text-[var(--color-text)]">{loadLabel || '正在加载视频…'}</p>
+            {loadingFile && (
+              <p className="max-w-full truncate text-xs text-[var(--color-muted)]">{loadingFile}</p>
+            )}
+            <div className="w-full max-w-[180px]">
+              <div className="mb-1 flex justify-between text-xs text-[var(--color-muted)]">
+                <span>处理中</span>
+                <span>{loadProgress}%</span>
+              </div>
+              <div className="h-1.5 overflow-hidden rounded-full bg-slate-200">
+                <div
+                  className="h-full bg-teal-brand transition-all"
+                  style={{ width: `${loadProgress}%` }}
+                />
+              </div>
+            </div>
+          </div>
+        ) : (
+          <>
+            <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-teal-brand/10 text-2xl">
+              🎬
+            </div>
+            <p className="text-sm font-medium text-[var(--color-text)]">{label}</p>
+            <p className="mt-1 text-xs text-[var(--color-muted)]">
+              拖拽或点击选择 · MP4 WebM MOV · 最大 {MAX_VIDEO_SIZE_MB}MB · 最长 {MAX_VIDEO_DURATION}s
+            </p>
+          </>
+        )}
         <input
           ref={inputRef}
           type="file"
           accept={ACCEPTED_VIDEO_TYPES.join(',')}
           className="hidden"
+          disabled={loading}
           onChange={onChange}
         />
       </div>
