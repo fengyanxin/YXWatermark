@@ -14,7 +14,7 @@ import { createAIServiceClient } from '@/lib/ai-service/client'
 import { inpaintWithOpenCV } from '@/lib/opencv/inpaint'
 import { imageUrlToBlob } from '@/lib/utils/image'
 import { removeWatermarkFromVideo, computeRemoveVideoPercent, formatRemoveVideoProgress } from '@/lib/video/removeWatermarkVideo'
-import { computeProcessFrameCount } from '@/lib/utils/video'
+import { formatVideoFps, computeProcessFrameCount } from '@/lib/utils/video'
 import { useSaveVideo } from '@/hooks/useSaveVideo'
 import { DEFAULT_VIDEO_FPS, MAX_VIDEO_DURATION } from '@/types'
 
@@ -49,7 +49,9 @@ export function RemoveVideoControls({ maskData }: { maskData: MaskData }) {
   const [exportDetail, setExportDetail] = useState('')
 
   const exportFps = video?.fps ?? DEFAULT_VIDEO_FPS
-  const frameCount = video ? computeProcessFrameCount(video.duration, exportFps) : 0
+  const frameCount = video
+    ? (video.frameCount ?? computeProcessFrameCount(video.duration, exportFps))
+    : 0
   const hasMask =
     maskData.lines.length > 0 ||
     maskData.rects.some((r) => r.width > 0 && r.height > 0)
@@ -189,7 +191,7 @@ export function RemoveVideoControls({ maskData }: { maskData: MaskData }) {
         return
       }
 
-      showToast(`开始逐帧修复，共 ${frameCount} 帧（${exportFps} fps），请耐心等待…`)
+      showToast(`开始逐帧修复，共 ${frameCount} 帧（${formatVideoFps(exportFps)} fps），请耐心等待…`)
 
       const { blob, format, fallbackReason } = await removeWatermarkFromVideo({
         videoUrl: video.url,
@@ -201,6 +203,7 @@ export function RemoveVideoControls({ maskData }: { maskData: MaskData }) {
         useAi: engine === 'ai',
         format: 'mp4',
         fps: exportFps,
+        frameCount: video.frameCount ?? computeProcessFrameCount(video.duration, exportFps),
         onProgress: (p) => {
           setProcessProgress(computeRemoveVideoPercent(p))
           setExportDetail(formatRemoveVideoProgress(p))
@@ -287,7 +290,7 @@ export function RemoveVideoControls({ maskData }: { maskData: MaskData }) {
 
       {video && (
         <p className="text-xs text-[var(--color-muted)]">
-          预计导出 {frameCount} 帧（{video.duration.toFixed(1)}s · 原片 {exportFps} fps，最长{' '}
+          预计导出 {frameCount} 帧（{video.duration.toFixed(1)}s · 原片 {formatVideoFps(exportFps)} fps，最长{' '}
           {MAX_VIDEO_DURATION}s）
         </p>
       )}

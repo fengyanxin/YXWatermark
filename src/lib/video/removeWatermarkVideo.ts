@@ -9,11 +9,11 @@ import { dataUrlToBlob, imageUrlToBlob } from '@/lib/utils/image'
 import { exportVideo, type VideoExportFormat } from '@/lib/video/frameEncoder'
 import {
   captureVideoFrameAt,
-  computeProcessFrameCount,
   exportFrameTime,
   loadVideoElement,
   mountOffscreenVideo,
   primeVideoDecoder,
+  resolveVideoExportTiming,
 } from '@/lib/utils/video'
 
 export interface VideoRemoveProgress {
@@ -38,7 +38,12 @@ export function formatRemoveVideoProgress(p: VideoRemoveProgress): string {
 }
 
 async function yieldToUi() {
-  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+  // ponytail: 后台标签页会暂停 rAF，改用 setTimeout 保证切走标签页仍能继续
+  if (typeof document !== 'undefined' && !document.hidden) {
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+    return
+  }
+  await new Promise<void>((resolve) => setTimeout(resolve, 0))
 }
 
 async function reportProgress(
@@ -59,6 +64,7 @@ interface RemoveVideoOptions {
   useAi: boolean
   format: VideoExportFormat
   fps?: number
+  frameCount?: number
   onProgress?: (p: VideoRemoveProgress) => void
 }
 
@@ -141,13 +147,6 @@ function imageDataToPngBlob(data: ImageData): Promise<Blob> {
   })
 }
 
-async function drawFrameBlob(ctx: CanvasRenderingContext2D, blob: Blob): Promise<void> {
-  const bitmap = await createImageBitmap(blob)
-  ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height)
-  ctx.drawImage(bitmap, 0, 0, ctx.canvas.width, ctx.canvas.height)
-  bitmap.close()
-}
-
 /** 逐帧 seek + AI 修复，保持原分辨率；去水印导出不含音轨 */
 export async function removeWatermarkFromVideo(
   options: RemoveVideoOptions,
@@ -168,6 +167,7 @@ export async function removeWatermarkFromVideo(
     useAi,
     format,
     fps = 30,
+    frameCount: knownFrameCount,
     onProgress,
   } = options
 
@@ -176,8 +176,11 @@ export async function removeWatermarkFromVideo(
   const exportDuration = video.duration || duration
   const exportWidth = video.videoWidth || width
   const exportHeight = video.videoHeight || height
-  const exportFps = Math.max(1, fps)
-  const frameCount = computeProcessFrameCount(exportDuration, exportFps)
+  const { fps: exportFps, frameCount } = resolveVideoExportTiming(
+    exportDuration,
+    fps,
+    knownFrameCount,
+  )
   const aiClient = useAi ? createAIServiceClient(aiServiceUrl) : null
 
   await reportProgress(onProgress, { phase: 'prepare', current: 0, total: frameCount })
@@ -218,26 +221,40 @@ export async function removeWatermarkFromVideo(
       }
     }
 
-    const result = await exportVideo({
-      width: exportWidth,
-      height: exportHeight,
-      duration: exportDuration,
-      fps: exportFps,
-      frameCount,
-      format,
-      mode: 'seek',
-      renderFrame: async (ctx, _time, index) => {
-        await drawFrameBlob(ctx, processedFrames[index])
-        await reportProgress(onProgress, { phase: 'encode', current: index + 1, total: frameCount })
-      },
-    })
+    const frameBitmaps = await Promise.all(processedFrames.map((blob) => createImageBitmap(blob)))
 
-    return {
-      blob: result.blob,
-      mimeType: result.mimeType,
-      format: result.format,
-      frameCount,
-      fallbackReason: result.fallbackReason,
+    try {
+      const result = await exportVideo({
+        width: exportWidth,
+        height: exportHeight,
+        duration: exportDuration,
+        fps: exportFps,
+        frameCount,
+        format,
+        mode: 'seek',
+        renderFrame: (ctx, _time, index) => {
+          const bitmap = frameBitmaps[index]
+          ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height)
+          ctx.drawImage(bitmap, 0, 0, ctx.canvas.width, ctx.canvas.height)
+        },
+        onProgress: (p) => {
+          void reportProgress(onProgress, {
+            phase: 'encode',
+            current: Math.max(1, Math.round((p / 100) * frameCount)),
+            total: frameCount,
+          })
+        },
+      })
+
+      return {
+        blob: result.blob,
+        mimeType: result.mimeType,
+        format: result.format,
+        frameCount,
+        fallbackReason: result.fallbackReason,
+      }
+    } finally {
+      frameBitmaps.forEach((b) => b.close())
     }
   } finally {
     unmountVideo()

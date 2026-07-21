@@ -5,9 +5,9 @@ import {
 } from '@/lib/canvas/watermarkRenderer'
 import { exportVideo, drawVideoFrameSharp, type VideoExportFormat } from '@/lib/video/frameEncoder'
 import {
-  computeProcessFrameCount,
   loadVideoElement,
   mountOffscreenVideo,
+  resolveVideoExportTiming,
   seekVideo,
   waitForPresentedFrame,
 } from '@/lib/utils/video'
@@ -34,7 +34,7 @@ export async function exportWatermarkedVideo(
   const exportWidth = video.videoWidth || width
   const exportHeight = video.videoHeight || height
   const exportDuration = video.duration
-  const exportFps = Math.max(1, fps)
+  const timing = resolveVideoExportTiming(exportDuration, fps)
 
   const useSeekMp4 =
     format === 'mp4' &&
@@ -52,8 +52,8 @@ export async function exportWatermarkedVideo(
       width: exportWidth,
       height: exportHeight,
       duration: exportDuration,
-      fps: exportFps,
-      frameCount: computeProcessFrameCount(exportDuration, exportFps),
+      fps: timing.fps,
+      frameCount: timing.frameCount,
       format,
       mode: useSeekMp4 ? 'seek' : 'playback',
       playbackVideo: useSeekMp4 ? undefined : video,

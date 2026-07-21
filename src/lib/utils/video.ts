@@ -100,6 +100,7 @@ function readBoxType(view: DataView, offset: number): string {
 interface Mp4VideoInfo {
   fps: number
   frameCount: number
+  pixels: number
 }
 
 /** 从 MP4/MOV 容器读取帧率与样本数 */
@@ -107,9 +108,13 @@ async function parseVideoInfoFromFile(file: File): Promise<Mp4VideoInfo | null> 
   if (!file.type.includes('mp4') && !file.type.includes('quicktime') && !file.name.match(/\.(mp4|mov)$/i)) {
     return null
   }
+  // ponytail: 小于 32MB 整文件读 moov，避免 moov 被 head/tail 切片截断
+  if (file.size <= 32 * 1024 * 1024) {
+    return parseMp4VideoInfo(await file.arrayBuffer())
+  }
   const chunk = Math.min(file.size, 16 * 1024 * 1024)
   let info = parseMp4VideoInfo(await file.slice(0, chunk).arrayBuffer())
-  if (!info && file.size > chunk) {
+  if (!info) {
     info = parseMp4VideoInfo(await file.slice(file.size - chunk).arrayBuffer())
   }
   return info
@@ -125,6 +130,7 @@ function parseMp4VideoInfo(buffer: ArrayBuffer): Mp4VideoInfo | null {
     let sttsSamples = 0
     let sttsTicks = 0
     let stszCount: number | null = null
+    let pixels = 0
 
     const walk = (s: number, e: number) => {
       let offset = s
@@ -141,7 +147,10 @@ function parseMp4VideoInfo(buffer: ArrayBuffer): Mp4VideoInfo | null {
         const bodyStart = offset + header
         const bodyEnd = Math.min(offset + size, e)
 
-        if (type === 'mdhd') {
+        if (type === 'tkhd') {
+          const dim = readTkhdDimensions(view, bodyStart, bodyEnd)
+          if (dim) pixels = dim.width * dim.height
+        } else if (type === 'mdhd') {
           const ts = readMdhdTimescale(view, bodyStart, bodyEnd)
           if (ts) timescale = ts
         } else if (type === 'stts') {
@@ -171,7 +180,12 @@ function parseMp4VideoInfo(buffer: ArrayBuffer): Mp4VideoInfo | null {
     return {
       fps: snapCommonFps(frameCount / durationSec),
       frameCount,
+      pixels,
     }
+  }
+
+  function trakScore(info: Mp4VideoInfo): number {
+    return info.frameCount * 1_000_000_000 + info.pixels
   }
 
   let offset = 0
@@ -189,6 +203,7 @@ function parseMp4VideoInfo(buffer: ArrayBuffer): Mp4VideoInfo | null {
     const bodyEnd = Math.min(offset + size, buffer.byteLength)
 
     if (type === 'moov') {
+      let best: Mp4VideoInfo | null = null
       let trakOff = bodyStart
       while (trakOff + 8 <= bodyEnd) {
         let trakSize = view.getUint32(trakOff)
@@ -201,10 +216,11 @@ function parseMp4VideoInfo(buffer: ArrayBuffer): Mp4VideoInfo | null {
         const trakType = readBoxType(view, trakOff + 4)
         if (trakType === 'trak') {
           const info = parseTrak(trakOff + trakHeader, trakOff + trakSize)
-          if (info) return info
+          if (info && (!best || trakScore(info) > trakScore(best))) best = info
         }
         trakOff += trakSize
       }
+      if (best) return best
     }
 
     offset += size
@@ -239,6 +255,22 @@ function trackHasVideoHandler(view: DataView, start: number, end: number): boole
   }
   walk(start, end)
   return found
+}
+
+function readTkhdDimensions(
+  view: DataView,
+  start: number,
+  end: number,
+): { width: number; height: number } | null {
+  if (start + 8 > end) return null
+  const version = view.getUint8(start)
+  const widthOff = version === 1 ? start + 88 : start + 76
+  const heightOff = widthOff + 4
+  if (heightOff + 4 > end) return null
+  const width = view.getUint32(widthOff) >>> 16
+  const height = view.getUint32(heightOff) >>> 16
+  if (width <= 0 || height <= 0) return null
+  return { width, height }
 }
 
 function readMdhdTimescale(view: DataView, start: number, end: number): number | null {
@@ -378,7 +410,7 @@ export function waitForPresentedFrame(video: HTMLVideoElement, timeoutMs = 5000)
       video.requestVideoFrameCallback(() => finish())
       return
     }
-    requestAnimationFrame(() => requestAnimationFrame(finish))
+    setTimeout(finish, 0)
   })
 }
 
@@ -495,6 +527,26 @@ function isCanvasMostlyBlack(
   return sum / (data.length / 4) < 8
 }
 
+/** 暂停态 seek 后短播一针再停；否则 drawImage 会一直抓到同一帧 */
+async function decodeFrameAtCurrentTime(video: HTMLVideoElement, time: number): Promise<void> {
+  if (!video.requestVideoFrameCallback) {
+    await waitForPresentedFrame(video)
+    return
+  }
+  try {
+    await video.play()
+    await waitForPresentedFrame(video)
+  } catch {
+    await waitForPresentedFrame(video)
+  } finally {
+    video.pause()
+  }
+  if (Math.abs(video.currentTime - time) > 0.02) {
+    await seekVideo(video, time)
+    await waitForPresentedFrame(video)
+  }
+}
+
 export async function captureVideoFrameAt(
   video: HTMLVideoElement,
   time: number,
@@ -502,7 +554,7 @@ export async function captureVideoFrameAt(
   height: number,
 ): Promise<string> {
   await seekVideo(video, time)
-  await waitForPresentedFrame(video)
+  await decodeFrameAtCurrentTime(video, time)
 
   const canvas = document.createElement('canvas')
   canvas.width = width
@@ -513,11 +565,7 @@ export async function captureVideoFrameAt(
 
   if (time < 0.05 && isCanvasMostlyBlack(ctx, width, height)) {
     try {
-      await video.play()
-      await waitForPresentedFrame(video)
-      video.pause()
-      await seekVideo(video, Math.max(time, 0.001))
-      await waitForPresentedFrame(video)
+      await decodeFrameAtCurrentTime(video, Math.max(time, 0.001))
       ctx.drawImage(video, 0, 0, width, height)
     } catch {
       /* 保留首次抓帧结果 */
@@ -544,4 +592,24 @@ export function exportFrameTime(index: number, frameCount: number, duration: num
 export function computeProcessFrameCount(duration: number, fps: number): number {
   const d = clampVideoDuration(duration)
   return Math.max(1, Math.round(d * fps))
+}
+
+/** 导出帧数 = 播放时长 × 帧率；有上传时算好的帧数则直接用，避免 fps 偏差导致帧数膨胀 */
+export function resolveVideoExportTiming(
+  duration: number,
+  nominalFps: number,
+  knownFrameCount?: number,
+): { duration: number; frameCount: number; fps: number } {
+  const d = clampVideoDuration(duration)
+  if (knownFrameCount != null && knownFrameCount > 0) {
+    return { duration: d, frameCount: knownFrameCount, fps: knownFrameCount / d }
+  }
+  const fps = Math.max(0.001, nominalFps)
+  const frameCount = computeProcessFrameCount(d, fps)
+  return { duration: d, frameCount, fps: frameCount / d }
+}
+
+export function formatVideoFps(fps: number): string {
+  const rounded = Math.round(fps * 10) / 10
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1)
 }

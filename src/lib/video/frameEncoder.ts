@@ -70,7 +70,7 @@ function waitEncodeQueue(encoder: VideoEncoder, maxSize = 3): Promise<void> {
   return new Promise((resolve) => {
     const poll = () => {
       if (encoder.encodeQueueSize <= maxSize) resolve()
-      else requestAnimationFrame(poll)
+      else setTimeout(poll, 16)
     }
     poll()
   })
@@ -135,8 +135,18 @@ export interface EncodeVideoOptions {
   onProgress?: (progress: number) => void
 }
 
-function frameTimestampUs(index: number, fps: number): number {
-  return Math.round((index * 1_000_000) / fps)
+function frameTimestampUs(index: number, frameCount: number, durationSec: number): number {
+  if (frameCount <= 0) return 0
+  return Math.round((index * durationSec * 1_000_000) / frameCount)
+}
+
+function frameDurationUs(index: number, frameCount: number, durationSec: number): number {
+  const start = frameTimestampUs(index, frameCount, durationSec)
+  const end =
+    index + 1 >= frameCount
+      ? Math.round(durationSec * 1_000_000)
+      : frameTimestampUs(index + 1, frameCount, durationSec)
+  return Math.max(1, end - start)
 }
 
 function resolveFrameCount(opts: EncodeVideoOptions, fps: number): number {
@@ -259,8 +269,9 @@ async function encodeWithPacedMediaRecorder(
   const encHeight = evenDimension(srcHeight)
   const fps = sourceFps(opts)
   const frameCount = resolveFrameCount(opts, fps)
-  const frameMs = 1000 / fps
-  const bitrate = estimateVideoBitrate(encWidth, encHeight, fps)
+  const totalDurationMs = opts.duration * 1000
+  const recordingStart = performance.now()
+  const bitrate = estimateVideoBitrate(encWidth, encHeight, frameCount / opts.duration)
 
   const drawCanvas = document.createElement('canvas')
   drawCanvas.width = srcWidth
@@ -289,7 +300,6 @@ async function encodeWithPacedMediaRecorder(
   recorder.start()
 
   for (let i = 0; i < frameCount; i++) {
-    const tick = performance.now()
     const time = exportFrameTime(i, frameCount, opts.duration)
     await opts.renderFrame(drawCtx, time, i)
     if (encCanvas !== drawCanvas) {
@@ -297,7 +307,8 @@ async function encodeWithPacedMediaRecorder(
     }
     track.requestFrame?.()
     opts.onProgress?.(Math.min(99, ((i + 1) / frameCount) * 100))
-    const wait = frameMs - (performance.now() - tick)
+    const deadline = recordingStart + ((i + 1) / frameCount) * totalDurationMs
+    const wait = deadline - performance.now()
     if (wait > 0) await sleep(wait)
   }
 
@@ -317,9 +328,10 @@ async function encodeWithWebCodecsMp4(opts: EncodeVideoOptions): Promise<Blob> {
   const encWidth = evenDimension(srcWidth)
   const encHeight = evenDimension(srcHeight)
   const fps = sourceFps(opts)
-  const encRate = encoderFps(fps)
   const frameCount = resolveFrameCount(opts, fps)
-  const bitrate = estimateVideoBitrate(encWidth, encHeight, fps)
+  const encFps = frameCount / opts.duration
+  const encRate = encoderFps(encFps)
+  const bitrate = estimateVideoBitrate(encWidth, encHeight, encFps)
 
   const encoderConfig = await pickH264EncoderConfig(encWidth, encHeight, encRate, bitrate)
   if (!encoderConfig) {
@@ -376,8 +388,8 @@ async function encodeWithWebCodecsMp4(opts: EncodeVideoOptions): Promise<Blob> {
 
       await waitEncodeQueue(encoder)
 
-      const timestamp = frameTimestampUs(i, fps)
-      const duration = frameTimestampUs(i + 1, fps) - timestamp
+      const timestamp = frameTimestampUs(i, frameCount, opts.duration)
+      const duration = frameDurationUs(i, frameCount, opts.duration)
       const frame = new VideoFrame(encCanvas, { timestamp, duration })
       try {
         encoder.encode(frame, { keyFrame: i <= 2 || i % encRate === 0 })

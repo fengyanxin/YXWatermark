@@ -5,7 +5,7 @@ import {
   MAX_VIDEO_SIZE,
   type VideoFile,
 } from '@/types'
-import { getVideoMeta } from '@/lib/utils/video'
+import { getVideoMeta, formatVideoFps } from '@/lib/utils/video'
 import { useAppStore } from '@/stores/appStore'
 
 const MAX_VIDEO_SIZE_MB = MAX_VIDEO_SIZE / (1024 * 1024)
@@ -155,7 +155,7 @@ export function VideoUpload({ video, onVideo, label = '上传视频' }: VideoUpl
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-medium">{video.file.name}</p>
               <p className="text-xs text-[var(--color-muted)]">
-                {video.width} × {video.height} · {video.fps} fps · {formatDuration(video.duration)}
+                {video.width} × {video.height} · {formatVideoFps(video.fps)} fps · {formatDuration(video.duration)}
               </p>
             </div>
             <button
