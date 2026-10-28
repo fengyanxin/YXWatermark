@@ -2,9 +2,10 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Stage, Layer, Image as KonvaImage, Text, Group } from 'react-konva'
 import type Konva from 'konva'
 import { useAddWatermarkStore } from '@/stores/addWatermarkStore'
-import { gridPositionToCoords } from '@/lib/utils/image'
+import { computePreviewScale, gridPositionToCoords } from '@/lib/utils/image'
 
 const PREVIEW_MAX = 720
+const PREVIEW_PADDING = 32
 
 export function WatermarkPreview() {
   const image = useAddWatermarkStore((s) => s.image)
@@ -12,12 +13,15 @@ export function WatermarkPreview() {
   const [baseImage, setBaseImage] = useState<HTMLImageElement | null>(null)
   const [logoImage, setLogoImage] = useState<HTMLImageElement | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
-  const [containerWidth, setContainerWidth] = useState(600)
+  const [containerSize, setContainerSize] = useState({ width: 600, height: 480 })
 
   useEffect(() => {
     if (!containerRef.current) return
     const ro = new ResizeObserver(([entry]) => {
-      setContainerWidth(entry.contentRect.width)
+      setContainerSize({
+        width: entry.contentRect.width,
+        height: entry.contentRect.height,
+      })
     })
     ro.observe(containerRef.current)
     return () => ro.disconnect()
@@ -47,12 +51,17 @@ export function WatermarkPreview() {
 
   const scale = useMemo(() => {
     if (!image) return 1
-    const maxDim = Math.max(image.width, image.height)
-    if (maxDim <= PREVIEW_MAX) return 1
-    return PREVIEW_MAX / maxDim
-  }, [image])
+    return computePreviewScale(
+      image.width,
+      image.height,
+      containerSize.width,
+      containerSize.height,
+      PREVIEW_MAX,
+      PREVIEW_PADDING,
+    )
+  }, [image, containerSize.width, containerSize.height])
 
-  const stageWidth = image ? image.width * scale : containerWidth
+  const stageWidth = image ? image.width * scale : containerSize.width - PREVIEW_PADDING
   const stageHeight = image ? image.height * scale : 400
 
   const tiledTexts = useMemo(() => {
@@ -108,7 +117,7 @@ export function WatermarkPreview() {
   return (
     <div
       ref={containerRef}
-      className="flex h-full min-h-[400px] items-center justify-center overflow-auto rounded-xl border border-[var(--color-border)] bg-[#1e293b]/5 p-4"
+      className="flex h-full min-h-0 items-center justify-center overflow-auto rounded-xl border border-[var(--color-border)] bg-[#1e293b]/5 p-4"
     >
       {!image || !baseImage ? (
         <div className="text-center text-[var(--color-muted)]">
@@ -116,6 +125,7 @@ export function WatermarkPreview() {
           <p className="text-sm">上传图片后在此预览水印效果</p>
         </div>
       ) : (
+        <div className="shrink-0" style={{ width: stageWidth, height: stageHeight }}>
         <Stage width={stageWidth} height={stageHeight} scaleX={scale} scaleY={scale}>
           <Layer>
             <KonvaImage image={baseImage} width={image.width} height={image.height} />
@@ -193,6 +203,7 @@ export function WatermarkPreview() {
             )}
           </Layer>
         </Stage>
+        </div>
       )}
     </div>
   )

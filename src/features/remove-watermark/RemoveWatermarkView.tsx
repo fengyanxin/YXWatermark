@@ -30,11 +30,11 @@ export function RemoveWatermarkView() {
   return (
     <div className="flex h-full flex-col gap-4">
       <div className="grid min-h-0 flex-1 grid-cols-[220px_1fr_280px] gap-4">
-        <aside className="overflow-y-auto rounded-xl border border-[var(--color-border)] bg-white p-4">
+        <aside className="min-h-0 overflow-y-auto rounded-xl border border-[var(--color-border)] bg-white p-4">
           <ImageUpload image={image} onImage={handleImageChange} label="上传待处理图片" />
         </aside>
 
-        <main className="min-w-0">
+        <main className="min-h-0 min-w-0">
           <MaskEditor
             image={image}
             resultUrl={resultUrl}

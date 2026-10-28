@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Stage, Layer, Image as KonvaImage, Line, Rect } from 'react-konva'
 import type Konva from 'konva'
+import { computePreviewScale } from '@/lib/utils/image'
 import type { ImageFile, MaskTool } from '@/types'
 
 const PREVIEW_MAX = 720
+const PREVIEW_PADDING = 32
+const TOOLBAR_HEIGHT = 44
 
 export interface MaskData {
   lines: { points: number[]; strokeWidth: number }[]
@@ -41,7 +44,7 @@ export function MaskEditor({
   const [draftRect, setDraftRect] = useState<MaskData['rects'][0] | null>(null)
   const [history, setHistory] = useState<('line' | 'rect')[]>([])
   const containerRef = useRef<HTMLDivElement>(null)
-  const [containerWidth, setContainerWidth] = useState(600)
+  const [containerSize, setContainerSize] = useState({ width: 600, height: 480 })
 
   useEffect(() => {
     onMaskChange({ lines, rects })
@@ -50,7 +53,10 @@ export function MaskEditor({
   useEffect(() => {
     if (!containerRef.current) return
     const ro = new ResizeObserver(([entry]) => {
-      setContainerWidth(entry.contentRect.width)
+      setContainerSize({
+        width: entry.contentRect.width,
+        height: entry.contentRect.height,
+      })
     })
     ro.observe(containerRef.current)
     return () => ro.disconnect()
@@ -118,11 +124,19 @@ export function MaskEditor({
     img.src = resultUrl
   }, [resultUrl])
 
+  const toolbarOffset = !readOnly && !resultUrl ? TOOLBAR_HEIGHT : 0
   const scale = image
-    ? Math.min(1, PREVIEW_MAX / Math.max(image.width, image.height))
+    ? computePreviewScale(
+        image.width,
+        image.height,
+        containerSize.width,
+        Math.max(1, containerSize.height - toolbarOffset),
+        PREVIEW_MAX,
+        PREVIEW_PADDING,
+      )
     : 1
 
-  const stageWidth = image ? image.width * scale : containerWidth
+  const stageWidth = image ? image.width * scale : containerSize.width - PREVIEW_PADDING
   const stageHeight = image ? image.height * scale : 400
 
   const updateDraftRect = (next: MaskData['rects'][0] | null) => {
@@ -225,7 +239,7 @@ export function MaskEditor({
   return (
     <div
       ref={containerRef}
-      className="relative flex h-full min-h-[400px] items-center justify-center overflow-auto rounded-xl border border-[var(--color-border)] bg-[#1e293b]/5 p-4"
+      className="relative flex h-full min-h-0 items-center justify-center overflow-auto rounded-xl border border-[var(--color-border)] bg-[#1e293b]/5 p-4"
     >
       {!image || !baseImage ? (
         <div className="text-center text-[var(--color-muted)]">

@@ -37,6 +37,20 @@ export function downloadDataUrl(dataUrl: string, filename: string) {
   link.click()
 }
 
+/** 预览缩放：不超过 maxDim，且完整落入容器（含 padding） */
+export function computePreviewScale(
+  width: number,
+  height: number,
+  containerWidth: number,
+  containerHeight: number,
+  maxDim = 720,
+  padding = 32,
+): number {
+  const maxW = Math.max(1, containerWidth - padding)
+  const maxH = Math.max(1, containerHeight - padding)
+  return Math.min(1, maxDim / Math.max(width, height), maxW / width, maxH / height)
+}
+
 export function gridPositionToCoords(
   position: GridPosition,
   width: number,
